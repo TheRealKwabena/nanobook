@@ -1,0 +1,25 @@
+# build output
+build/
+cmake-build*/
+CMakeCache.txt
+CMakeFiles/
+
+# generated feeds and ground truth — reproducible from `make data`, and large
+data/*.itch
+data/*_truth.csv
+*.NASDAQ_ITCH50
+*.NASDAQ_ITCH50.gz
+
+# python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# os / editor
+.DS_Store
+compile_commands.json
+.cache/
+.idea/
+.vscode/

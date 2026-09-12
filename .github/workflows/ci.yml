@@ -1,0 +1,46 @@
+name: ci
+
+# Correctness gates the build: `make check` runs the unit and differential tests
+# under AddressSanitizer and UBSan, then reconstructs a 1M-message feed and
+# compares it against an independently generated oracle event by event. `replay`
+# exits nonzero on any mismatch or any nonzero integrity counter, so a corrupt
+# book fails the build rather than producing a quietly wrong number.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / ${{ matrix.cxx }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cxx: g++
+          - os: ubuntu-latest
+            cxx: clang++
+          - os: macos-latest
+            cxx: clang++
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compiler version
+        run: ${{ matrix.cxx }} --version
+
+      # -march=native is unsafe on shared CI runners: the build host and the
+      # test host are not guaranteed to be the same microarchitecture.
+      - name: Build and run the full check
+        run: make check CXX=${{ matrix.cxx }} OPT="-O2 -DNDEBUG"
+
+      - name: Unit tests (optimised, no sanitizer)
+        run: make tests CXX=${{ matrix.cxx }} DBG="-O2 -g"
+
+      - name: Smoke-test the benchmarks
+        run: |
+          make tools CXX=${{ matrix.cxx }} OPT="-O2 -DNDEBUG"
+          ./build/bin/bench_structures --ops 2000000 --live 50000 --reps 1
