@@ -1,5 +1,7 @@
 # nanobook
 
+[![ci](https://github.com/TheRealKwabena/nanobook/actions/workflows/ci.yml/badge.svg)](https://github.com/TheRealKwabena/nanobook/actions/workflows/ci.yml)
+
 A NASDAQ TotalView-ITCH 5.0 feed handler and limit order book reconstructor in C++20,
 built to be **fast enough to matter** and **verified well enough to trust**.
 
@@ -63,6 +65,11 @@ Derived from the spread across 256-message blocks — see
 |---|---|---|---|
 | Order-reference map<br><sub>200k live orders, near-sequential keys, 55% lookup / 23% erase / 22% insert</sub> | `OrderMap` **9.84 ns/op** | `std::unordered_map` 12.60 ns/op | **1.28x** |
 | Book update + best-price query<br><sub>updates clustered near the touch</sub> | `PriceLadder` **7.35 ns/op** | `std::map` 14.91 ns/op | **2.03x** |
+
+These ratios are platform-dependent and should not be quoted as universal. The
+same benchmark on CI's shared x86-64 runners reports 1.44x and 1.23x — different
+cache hierarchy, different standard library, noisier host. The numbers above are
+Apple M5 with libc++; reproduce your own with `make bench`.
 
 1.28x on the mean is a real but modest win, and worth stating plainly: libc++'s
 `unordered_map` is not slow. The reasons to keep the custom table are the ones a
