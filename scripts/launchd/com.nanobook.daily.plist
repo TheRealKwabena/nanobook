@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  nanobook nightly job.
+
+  Runs `nanobook daily`: streams the newest published IEX DEEP session, scores it
+  against a model that predates it, retrains, and writes the brief to data/daily.log.
+
+  Two things worth knowing before enabling this:
+
+    * It downloads 11-12 GB per run. Nothing is written to disk beyond the derived
+      features (a few MB), but the bandwidth is real. On a metered connection, do
+      not enable it.
+    * IEX publishes T+1, so a run picks up the previous session. The script walks
+      backwards to the newest available day, so weekends and holidays need no
+      special handling and a missed night is caught up on the next one.
+
+  Install:    make install-daily
+  Uninstall:  make uninstall-daily
+  Run once:   launchctl kickstart -k gui/$(id -u)/com.nanobook.daily
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nanobook.daily</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REPO__/scripts/launchd/run_daily.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__REPO__</string>
+
+    <!-- 04:10 local. Late enough that the previous session is published, early
+         enough that a long download finishes before the morning. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>4</integer>
+        <key>Minute</key><integer>10</integer>
+    </dict>
+
+    <!-- If the Mac was asleep at 04:10, run on wake rather than skipping the day. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>__REPO__/data/daily.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO__/data/daily.log</string>
+
+    <!-- Nightly batch work; keep it off the cores the user is typing on. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Nice</key>
+    <integer>5</integer>
+</dict>
+</plist>

@@ -107,6 +107,17 @@ was knowable, not merely held out from a shuffle. The scorecard is append-only a
 records which model file made each prediction and that model's training
 fingerprint, so the ordering is auditable rather than asserted.
 
+### Automating it
+
+```bash
+make install-daily      # launchd, 04:10 nightly; make uninstall-daily to stop
+make status-daily       # installed? last exit? last run's brief?
+```
+
+Opt-in on purpose: each run pulls 11-12 GB. The job walks back to the newest
+published session, so weekends, holidays and a missed night all take care of
+themselves.
+
 ### What it says today
 
 Five out-of-sample days, ten symbols, 285,750 one-second bars of real IEX DEEP:

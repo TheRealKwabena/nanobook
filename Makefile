@@ -29,7 +29,8 @@ TEST_SAN  := $(BIN)/run_tests_asan
 
 HEADERS   := $(wildcard cpp/include/nanobook/*.hpp)
 
-.PHONY: all tools tests check bench data clean fmt-check help brief fetch research
+.PHONY: all tools tests check bench data clean fmt-check help brief fetch research \
+        install-daily uninstall-daily status-daily
 
 all: tools tests
 
@@ -45,6 +46,11 @@ help:
 	@echo "  make fetch     — stream the latest published IEX DEEP day into data/features/"
 	@echo "  make research  — score every unscored day out-of-sample, then retrain"
 	@echo "  make brief     — print the morning brief"
+	@echo ""
+	@echo "automation (macOS launchd, downloads 11-12 GB per night):"
+	@echo "  make install-daily    — run the loop nightly at 04:10"
+	@echo "  make status-daily     — is it installed, when did it last run"
+	@echo "  make uninstall-daily  — stop it"
 
 tools: $(TOOL_BIN)
 
@@ -128,3 +134,28 @@ brief:
 	@$(PY) scripts/brief.py
 
 daily: fetch research brief
+
+# ---------------------------------------------------------------------------
+# Nightly automation. Deliberately opt-in: each run pulls 11-12 GB.
+# ---------------------------------------------------------------------------
+PLIST_SRC  := scripts/launchd/com.nanobook.daily.plist
+PLIST_DEST := $(HOME)/Library/LaunchAgents/com.nanobook.daily.plist
+REPO_ABS   := $(shell pwd)
+
+install-daily: tools
+	@mkdir -p $(HOME)/Library/LaunchAgents $(DATA)
+	@sed 's|__REPO__|$(REPO_ABS)|g' $(PLIST_SRC) > $(PLIST_DEST)
+	@launchctl bootout gui/$(shell id -u)/com.nanobook.daily 2>/dev/null || true
+	@launchctl bootstrap gui/$(shell id -u) $(PLIST_DEST)
+	@echo "installed: nanobook daily will run at 04:10, logging to $(DATA)/daily.log"
+	@echo "each run downloads 11-12 GB. remove it with: make uninstall-daily"
+
+uninstall-daily:
+	@launchctl bootout gui/$(shell id -u)/com.nanobook.daily 2>/dev/null || true
+	@rm -f $(PLIST_DEST)
+	@echo "removed the nightly job"
+
+status-daily:
+	@launchctl print gui/$(shell id -u)/com.nanobook.daily 2>/dev/null \
+	    | grep -E "state|last exit|runs" || echo "not installed"
+	@test -f $(DATA)/daily.log && echo "--- last run ---" && tail -20 $(DATA)/daily.log || true
