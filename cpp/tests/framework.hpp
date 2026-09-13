@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace nbtest {
@@ -58,6 +60,10 @@ template <class T>
 std::string to_str(const T& v) {
     if constexpr (std::is_same_v<T, bool>) return v ? "true" : "false";
     else if constexpr (std::is_same_v<T, char>) return std::string(1, v);
+    // string_view is only *explicitly* convertible to std::string, so it needs its
+    // own branch or it falls through to std::to_string and fails to compile.
+    else if constexpr (std::is_convertible_v<T, std::string_view>)
+        return std::string(std::string_view(v));
     else if constexpr (std::is_convertible_v<T, std::string>) return std::string(v);
     else return std::to_string(v);
 }

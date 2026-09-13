@@ -106,6 +106,47 @@ class PriceLadder {
         return true;
     }
 
+    // Set a level's aggregate size ABSOLUTELY, replacing whatever was there.
+    //
+    // This is IEX DEEP's update model and it is fundamentally different from
+    // ITCH's. ITCH sends deltas — an add of 300, a cancel of 100 — and the book
+    // accumulates them. DEEP sends the post-update aggregate size at a price and
+    // a size of zero means "remove this level". Applying a DEEP message through
+    // add()/remove() would treat an absolute quantity as a delta and diverge from
+    // the real book within seconds.
+    //
+    // Order count is set to zero because DEEP does not carry one: it aggregates
+    // resting displayed orders at a price and explicitly "does not indicate the
+    // number or size of individual orders at any price level". Reporting a
+    // fabricated count of 1 would let a queue-position feature silently compute
+    // nonsense, so the absence is represented rather than papered over.
+    bool set_level(itch::Price4 price, itch::Shares size) {
+        if (size == 0) {
+            const std::int64_t idx = index_of(price);
+            // Clearing a level we never had is normal when joining a stream
+            // mid-session, or for a price outside the window. Counted, not fatal.
+            if (idx < 0) { ++absent_clear_; return true; }
+            const auto i = static_cast<std::size_t>(idx);
+            if (qty_[i] == 0) { ++absent_clear_; return true; }
+            occupied_.reset(i);
+            qty_[i] = 0;
+            count_[i] = 0;
+            return true;
+        }
+
+        const std::int64_t idx = ensure_index(price);
+        if (idx < 0) return false;
+        const auto i = static_cast<std::size_t>(idx);
+        if (qty_[i] == 0) occupied_.set(i);
+        qty_[i] = static_cast<std::int64_t>(size);
+        count_[i] = 0;
+        return true;
+    }
+
+    // Clears of levels that held nothing. Normal mid-stream; a large count at the
+    // start of a full session file means the decoder is out of step.
+    [[nodiscard]] std::uint64_t absent_clears() const noexcept { return absent_clear_; }
+
     // Best price on this side: highest bid, lowest ask.
     [[nodiscard]] bool best(LevelView& out) const noexcept {
         const std::int64_t i = (side_ == itch::Side::Buy) ? occupied_.highest() : occupied_.lowest();
@@ -244,6 +285,7 @@ class PriceLadder {
     std::uint64_t regrows_ = 0;
     std::uint64_t negative_qty_ = 0;
     std::uint64_t missing_level_ = 0;
+    std::uint64_t absent_clear_ = 0;
 
   public:
     [[nodiscard]] std::uint64_t missing_level_events() const noexcept { return missing_level_; }

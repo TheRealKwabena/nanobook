@@ -64,6 +64,58 @@ namespace nanobook {
 }
 
 // ---------------------------------------------------------------------------
+// Unaligned LITTLE-endian loads.
+//
+// IEX-TP and IEX DEEP are little-endian, unlike ITCH. On arm64 and x86-64 the
+// host is already little-endian, so these compile to a bare unaligned load with
+// no swap — the memcpy is purely about avoiding the alignment and strict-aliasing
+// undefined behaviour, not about byte order. Written out explicitly anyway so a
+// big-endian port fails to compile rather than silently decoding garbage.
+// ---------------------------------------------------------------------------
+
+static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
+              "nanobook assumes a little-endian host; the load_le* helpers below "
+              "need byte swaps added for a big-endian target");
+
+[[nodiscard]] inline std::uint8_t load_le8(const void* src) noexcept {
+    std::uint8_t v;
+    std::memcpy(&v, src, 1);
+    return v;
+}
+
+[[nodiscard]] inline std::uint16_t load_le16(const void* src) noexcept {
+    std::uint16_t v;
+    std::memcpy(&v, src, 2);
+    return v;
+}
+
+[[nodiscard]] inline std::uint32_t load_le32(const void* src) noexcept {
+    std::uint32_t v;
+    std::memcpy(&v, src, 4);
+    return v;
+}
+
+[[nodiscard]] inline std::uint64_t load_le64(const void* src) noexcept {
+    std::uint64_t v;
+    std::memcpy(&v, src, 8);
+    return v;
+}
+
+// IEX prices and stream offsets are signed. Read the bits, then reinterpret —
+// a cast of the unsigned value is implementation-defined before C++20 and this
+// spells out the intent.
+[[nodiscard]] inline std::int64_t load_le64s(const void* src) noexcept {
+    std::int64_t v;
+    std::memcpy(&v, src, 8);
+    return v;
+}
+
+inline void store_le16(void* dst, std::uint16_t v) noexcept { std::memcpy(dst, &v, 2); }
+inline void store_le32(void* dst, std::uint32_t v) noexcept { std::memcpy(dst, &v, 4); }
+inline void store_le64(void* dst, std::uint64_t v) noexcept { std::memcpy(dst, &v, 8); }
+inline void store_le64s(void* dst, std::int64_t v) noexcept { std::memcpy(dst, &v, 8); }
+
+// ---------------------------------------------------------------------------
 // Big-endian stores — only used by the synthetic feed generator, so clarity
 // beats speed here.
 // ---------------------------------------------------------------------------

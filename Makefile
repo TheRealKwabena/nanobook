@@ -20,7 +20,7 @@ BUILD    := build
 BIN      := $(BUILD)/bin
 DATA     := data
 
-TOOLS    := gen_itch replay bench_structures
+TOOLS    := gen_itch replay bench_structures iex_replay
 TOOL_BIN := $(addprefix $(BIN)/,$(TOOLS))
 
 TEST_SRCS := $(wildcard cpp/tests/test_*.cpp)

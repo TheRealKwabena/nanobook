@@ -22,7 +22,7 @@ if(NANOBOOK_NATIVE AND CMAKE_BUILD_TYPE STREQUAL "Release")
   target_compile_options(nanobook INTERFACE -march=native)
 endif()
 
-foreach(tool gen_itch replay bench_structures)
+foreach(tool gen_itch replay bench_structures iex_replay)
   add_executable(${tool} cpp/tools/${tool}.cpp)
   target_link_libraries(${tool} PRIVATE nanobook)
 endforeach()

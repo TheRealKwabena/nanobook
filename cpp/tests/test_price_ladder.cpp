@@ -213,3 +213,81 @@ NB_TEST(price_ladder, differential_against_std_map) {
         CHECK_EQ(l.negative_qty_events(), 0u);
     }
 }
+
+// ---------------------------------------------------------------------------
+// set_level — IEX DEEP's absolute update semantics, as opposed to ITCH's deltas.
+// ---------------------------------------------------------------------------
+
+NB_TEST(price_ladder, set_level_replaces_rather_than_accumulates) {
+    // The bug this guards: routing a DEEP message through add(), which would
+    // treat an absolute aggregate size as a delta and double the level.
+    PriceLadder l(Side::Buy);
+    CHECK(l.set_level(1000000, 500));
+    CHECK_EQ(l.shares_at(1000000), 500);
+    CHECK(l.set_level(1000000, 300));     // absolute, so this is now 300 — not 800
+    CHECK_EQ(l.shares_at(1000000), 300);
+    CHECK(l.set_level(1000000, 900));
+    CHECK_EQ(l.shares_at(1000000), 900);
+    CHECK_EQ(l.level_count(), 1u);
+}
+
+NB_TEST(price_ladder, set_level_zero_removes_the_level) {
+    PriceLadder l(Side::Buy);
+    l.set_level(1000000, 500);
+    l.set_level(999900, 200);
+    CHECK_EQ(l.level_count(), 2u);
+
+    CHECK(l.set_level(1000000, 0));       // DEEP's level-removal encoding
+    CHECK_EQ(l.level_count(), 1u);
+    CHECK_EQ(l.shares_at(1000000), 0);
+
+    LevelView lv{};
+    CHECK(l.best(lv));
+    CHECK_EQ(lv.price, 999900u);          // best bid fell through correctly
+}
+
+NB_TEST(price_ladder, set_level_reports_no_order_count) {
+    // DEEP aggregates and carries no order count. Fabricating one would let a
+    // queue-position feature compute nonsense from it.
+    PriceLadder l(Side::Buy);
+    l.set_level(1000000, 500);
+    LevelView lv{};
+    CHECK(l.best(lv));
+    CHECK_EQ(lv.shares, 500);
+    CHECK_EQ(lv.order_count, 0u);
+}
+
+NB_TEST(price_ladder, clearing_an_absent_level_is_counted_not_fatal) {
+    // Normal when joining a stream mid-session: a level is cleared that we never
+    // saw created. Benign, but it should be visible.
+    PriceLadder l(Side::Buy);
+    l.set_level(1000000, 100);
+    CHECK(l.set_level(999900, 0));        // never existed
+    CHECK_EQ(l.absent_clears(), 1u);
+    CHECK(l.set_level(1000000, 0));       // did exist
+    CHECK_EQ(l.absent_clears(), 1u);
+    CHECK(l.set_level(1000000, 0));       // now gone, so this one is absent too
+    CHECK_EQ(l.absent_clears(), 2u);
+}
+
+NB_TEST(price_ladder, set_level_and_best_price_track_a_sweep) {
+    // A taking order exhausting three levels: DEEP describes this as three
+    // set-to-zero updates. The touch must walk down correctly.
+    PriceLadder asks(Side::Sell);
+    asks.set_level(1000100, 100);
+    asks.set_level(1000200, 200);
+    asks.set_level(1000300, 300);
+    LevelView lv{};
+    CHECK(asks.best(lv));
+    CHECK_EQ(lv.price, 1000100u);
+
+    asks.set_level(1000100, 0);
+    CHECK(asks.best(lv));
+    CHECK_EQ(lv.price, 1000200u);
+    asks.set_level(1000200, 0);
+    CHECK(asks.best(lv));
+    CHECK_EQ(lv.price, 1000300u);
+    asks.set_level(1000300, 0);
+    CHECK(!asks.best(lv));
+    CHECK_EQ(asks.level_count(), 0u);
+}

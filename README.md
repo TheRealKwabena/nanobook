@@ -2,8 +2,14 @@
 
 [![ci](https://github.com/TheRealKwabena/nanobook/actions/workflows/ci.yml/badge.svg)](https://github.com/TheRealKwabena/nanobook/actions/workflows/ci.yml)
 
-A NASDAQ TotalView-ITCH 5.0 feed handler and limit order book reconstructor in C++20,
-built to be **fast enough to matter** and **verified well enough to trust**.
+Order book reconstruction from raw exchange feeds in C++20, built to be **fast
+enough to matter** and **verified well enough to trust**. Two protocols:
+
+- **NASDAQ TotalView-ITCH 5.0** — full order-by-order (L3) reconstruction at
+  77 M messages/sec, verified byte-exact against an independent oracle.
+- **IEX DEEP 1.0** — aggregated (L2) reconstruction straight from real exchange
+  captures, which IEX publishes **free on a T+1 basis**. That makes a *daily*
+  pipeline possible without a market-data budget.
 
 Reconstructing an order book from ITCH is deceptively easy to do *almost* right.
 The feed is differential — there is no intraday snapshot — so the book you hold at
@@ -21,7 +27,7 @@ reconstruction is then checked against event by event.
 ```
 77.0 M messages/sec   13.0 ns/message   2.3 GB/s        single core, Apple M5
 0 mismatches across 333,045 verified events             byte-exact vs. oracle
-58 tests, 186,913 assertions, clean under ASan + UBSan
+90 tests, 187,111 assertions, clean under ASan + UBSan
 ```
 
 ---
@@ -138,6 +144,126 @@ verification against ground truth
 
 `replay` exits nonzero if any integrity counter is nonzero or any event mismatches,
 so it works as a CI gate.
+
+## IEX DEEP: a daily pipeline on free real data
+
+ITCH work runs on one-off historical samples, because real TotalView costs
+thousands a month. IEX Exchange publishes its full depth-of-book feed for free
+with a one-day lag, so `nanobook` also speaks DEEP — and that turns the project
+from a static backtest into something that accumulates.
+
+```bash
+make tools
+python3 scripts/fetch_day.py --date latest --symbols SPY,AAPL,MSFT,NVDA,TSLA
+```
+
+Verified against the real feed for 2026-09-11 — 460,930 messages decoded, zero
+transport defects, zero crossed books, clean under ASan and UBSan:
+
+```
+IEX-TP
+  segments            400000      sequence gaps        0 (0 messages missing)
+  messages            460930      sequence regressions 0
+  heartbeats            2716      unknown msg types    0
+
+books  (system event 'S')
+  symbol      updates       txns   in-transit   trades  crossed    bad px
+  AAPL            667        549          118       49        0         0
+  MSFT            811        550          261       35        0         0
+  SPY           15349      15348            1       39        0         0
+
+  transport defects   0  (clean)
+```
+
+### The 12 GB problem, and why nothing touches disk
+
+A single day of IEX DEEP is **11-12 GB gzipped**. Downloading that daily to keep a
+few megabytes of features would be absurd, so the pipeline never lands it:
+
+```
+curl -sL "$URL" | gunzip | iex_replay --pcap - --symbols ... | gzip > day.csv.gz
+```
+
+Peak disk usage is the output. Peak memory is one 1 MiB stream buffer plus one
+ladder per watched symbol. This is why `stream_buffer.hpp` exists alongside the
+`mmap` path: a decoder written against `peek`/`consume` works on a pipe and on a
+mapped file, and the ITCH side still gets the zero-copy benefit of `mmap` where
+the file is already local.
+
+### What DEEP peels through
+
+A HIST download is a raw network capture, so there are four wrappers before
+anything tradeable:
+
+```
+pcap-ng file
+  └─ Enhanced Packet Block
+       └─ Ethernet (+ VLAN tags)
+            └─ IPv4 (+ options) / UDP
+                 └─ IEX-TP segment (40-byte header, sequence numbers)
+                      └─ [2-byte length][DEEP message]  x N
+```
+
+Every layer is validated rather than assumed. Two that bite:
+
+- **The files are pcap-ng, not classic pcap** — despite being named `*.pcap.gz`
+  and despite the spec saying "PCAP or PCAP-NG". They begin with `0x0A0D0D0A` and
+  carry an option reading "File created by merging:", because IEX merges its A and
+  B multicast captures. A classic-pcap-only reader rejects every real file. Both
+  formats are supported and both are tested.
+- **IPv4 header length is read, not assumed.** IP options are rare, but assuming
+  20 bytes shifts every later field and decodes as plausible garbage.
+
+IEX-TP carries sequence numbers, so gaps are detectable — and a book rebuilt
+across a gap is wrong with no other symptom. Gaps, replays and session changes are
+counted, and `iex_replay` exits nonzero when any defect is nonzero.
+
+### Four ways DEEP differs from ITCH
+
+| | ITCH 5.0 | IEX DEEP 1.0 |
+|---|---|---|
+| Byte order | big-endian | **little-endian** |
+| Price field | `uint32` | **signed `int64`** |
+| Update model | deltas (add / cancel / execute) | **absolute level size** |
+| Book validity | every message | **only at transaction boundaries** |
+| Depth | order-by-order (L3) | aggregated (L2) |
+| Symbol key | `uint16` locate | 8-byte ticker |
+
+The last two rows are the ones that produce silent corruption:
+
+**Absolute, not delta.** A Price Level Update carries the aggregate size at that
+price *after* the update; size 0 removes the level. Routing that through ITCH's
+delta logic diverges from the real book within seconds. This is what
+`PriceLadder::set_level` exists for, and there is a
+[test](cpp/tests/test_price_ladder.cpp) asserting it replaces rather than
+accumulates.
+
+**The book is only valid at transaction boundaries.** One order book event may
+change several price levels at once. DEEP describes that as a run of updates with
+the event flag OFF terminated by one with it ON, and the spec is explicit that the
+book keeps its previous BBO throughout — an intermediate BBO "never truly
+existed". So `DeepBook` maintains two things: the ladders, updated on every
+message, and `stable_top()`, the BBO as of the last *completed* transaction, which
+is the only one a feature may read.
+
+This is the most dangerous bug in the codebase precisely because it makes results
+*better*: sampling mid-transition manufactures spreads that gapped and mids that
+jumped and came back, and a backtest will happily trade them. The `in-transit`
+column in the output above is the count of updates that occurred inside a
+multi-level transaction — 261 for MSFT in that run, all correctly suppressed.
+
+DEEP also carries **no order count and no order references**, so there is no L3
+and no queue position on this path. The ladder reports an order count of zero
+rather than fabricating one, so a queue-position feature cannot silently compute
+nonsense from it.
+
+### Honest limits of IEX data
+
+IEX is roughly **2-5% of US equity volume**. It is a real, complete view of one
+venue's displayed book — excellent for microstructure research and for building a
+daily habit — but it is not the consolidated market, and non-displayed orders and
+reserve portions never appear in DEEP at all. Any result from it is a statement
+about IEX, not about the NBBO.
 
 ### Running against real NASDAQ data
 
@@ -336,8 +462,14 @@ across sizes chosen to straddle every word and summary-word boundary, all under
 AddressSanitizer and UndefinedBehaviorSanitizer.
 
 ```
-58 tests in 6 suites, 186,913 assertions, 0 failures
+90 tests in 9 suites, 187,111 assertions, 0 failures
 ```
+
+The IEX decoder gets a fourth layer: its tests decode the **worked examples
+printed in the DEEP specification itself**, byte for byte. That is stronger than a
+round-trip against our own encoder — those bytes came from the exchange's own
+document, so agreeing with them means agreeing with IEX rather than with
+ourselves.
 
 Interleaved decoy symbols in the generated feed are deliberate: single-symbol
 test data silently passes a book that ignores the locate filter entirely.
@@ -348,7 +480,8 @@ test data silently passes a book that ignores the locate filter entirely.
 
 ```
 cpp/include/nanobook/
-  byte_order.hpp     unaligned big-endian loads/stores
+  types.hpp          scalar types shared by both protocols
+  byte_order.hpp     unaligned big- and little-endian loads/stores
   itch_spec.hpp      ITCH 5.0 wire format — message layouts, zero-copy views
   itch_writer.hpp    encoders (independent transcription; used by tests + generator)
   itch_parser.hpp    mmap + framing + templated dispatch
@@ -358,11 +491,19 @@ cpp/include/nanobook/
   order_book.hpp     the ITCH state machine
   book_builder.hpp   parser -> book glue, locate-based symbol filtering
   latency.hpp        clock, histogram, block timer
+  stream_buffer.hpp  growable read-ahead buffer, so decoders work on a pipe
+  pcap.hpp           classic pcap + pcap-ng container readers
+  iex_spec.hpp       IEX DEEP 1.0 wire format
+  iex_transport.hpp  IEX-TP framing, sequence-gap detection
+  iex_book.hpp       DEEP book, atomic transactions, Lee-Ready classification
 cpp/tools/
   gen_itch.cpp       synthetic feed + ground-truth oracle
-  replay.cpp         reconstruct, verify, report
+  replay.cpp         reconstruct ITCH, verify, report
+  iex_replay.cpp     reconstruct DEEP from a capture or a pipe
   bench_structures.cpp  head-to-head vs the standard library
-cpp/tests/           58 tests, zero dependencies
+scripts/
+  fetch_day.py       stream one day of IEX DEEP, store the feature table
+cpp/tests/           90 tests, zero dependencies
 ```
 
 The library is header-only; `make tools` and `make tests` are the only build
@@ -372,8 +513,12 @@ steps. `CMakeLists.txt` drives the same sources for IDE and CI use.
 
 ## Roadmap
 
-Stage 1 — the feed handler and book above — is complete and verified. Next:
+Stage 1 (ITCH feed handler and L3 book) and stage 2 (IEX DEEP, streaming
+transport, daily pipeline) are complete and verified. Next:
 
+- [ ] **Daily brief** — a `nanobook brief` command that reports yesterday's
+      microstructure and scores what the previous day's signals predicted, so the
+      track record is genuinely forward out-of-sample rather than a backtest.
 - [ ] **`pybind11` bindings** exposing the book as a streaming event iterator, so
       research runs on the exact reconstructed state rather than a re-derivation.
 - [ ] **Microstructure features** computed in C++ on the event stream: order-flow

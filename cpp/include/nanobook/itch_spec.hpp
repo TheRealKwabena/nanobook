@@ -26,6 +26,7 @@
 #include <string_view>
 
 #include "nanobook/byte_order.hpp"
+#include "nanobook/types.hpp"
 
 namespace nanobook::itch {
 
@@ -33,31 +34,23 @@ namespace nanobook::itch {
 // Scalar types
 // ---------------------------------------------------------------------------
 
-// ITCH prices are uint32 with 4 implied decimal places: 1234500 == $123.4500.
-// We keep them in that integer form end-to-end and never convert to double
-// inside the engine — a double cannot represent 0.01 exactly, and an order book
-// that rounds is an order book that silently loses shares.
-using Price4 = std::uint32_t;
+// The scalar types now live in types.hpp, shared with the IEX DEEP decoder.
+// Re-exported here so `itch::Price4` and friends keep meaning what they did.
+using Price4 = nanobook::Price4;
+using Shares = nanobook::Shares;
+using Nanos  = nanobook::Nanos;
+using nanobook::kPriceScale;
 
+// ITCH-specific: a 64-bit order reference, and the per-session symbol id.
 using OrderRef = std::uint64_t;
-using Shares   = std::uint32_t;
 using Locate   = std::uint16_t;
-using Nanos    = std::uint64_t;
-
-inline constexpr Price4 kPriceScale = 10000;
 
 // A price field of all-ones means "market order / no price" in several messages.
 inline constexpr Price4 kNoPrice = 0xFFFFFFFFu;
 
-enum class Side : std::uint8_t { Buy, Sell };
-
-[[nodiscard]] inline Side side_from_char(char c) noexcept {
-    return c == 'B' ? Side::Buy : Side::Sell;
-}
-
-[[nodiscard]] inline char side_to_char(Side s) noexcept {
-    return s == Side::Buy ? 'B' : 'S';
-}
+using Side = nanobook::Side;
+using nanobook::side_from_char;
+using nanobook::side_to_char;
 
 // ---------------------------------------------------------------------------
 // Message types
