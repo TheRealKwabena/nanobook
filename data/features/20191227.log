@@ -1,0 +1,40 @@
+  1M segments, session 1196490752 ...  2M segments, session 1196490752 ...  3M segments, session 1196490752 ...  4M segments, session 1196490752 ...  5M segments, session 1196490752 ...  6M segments, session 1196490752 ...  7M segments, session 1196490752 ...  8M segments, session 1196490752 ...  9M segments, session 1196490752 ...                                                            
+capture
+  packets             9504874
+  bytes               1045.5 MB
+  non-IP / non-UDP    0 / 0
+  truncated packets   0
+
+IEX-TP
+  segments            9504874
+  heartbeats          5968
+  messages            9683647
+  wrong protocol id   0
+  session changes     0
+  sequence gaps       0 (0 messages missing)
+  sequence regressions 0
+  unknown msg types   0
+  length mismatches   0
+  payload mismatches  0
+
+throughput
+  wall time           30.43 s
+  messages/sec        0.32 M
+  decode rate         34 MB/s
+
+books  (system event 'C')
+  matched messages    747333
+  feature rows        100956
+  symbol      updates       txns   in-transit   trades  crossed    bad px
+  SPY          281514     278964         2550     5959        0         0
+  QQQ          203558     201046         2512     1069        0         0
+  MSFT          94562      94302          260     2475        0         0
+  INTC          45441      45217          224     2896        0         0
+  XOM           34553      34250          303     1315        0         0
+  CSCO          25238      25118          120     2246        0         0
+  BAC           18093      17830          263     1627        0         0
+  T              9562       9390          172     1489        0         0
+  GE             4240       4198           42     6954        0         0
+  F              3867       3814           53      675        0         0
+
+  transport defects   0  (clean)

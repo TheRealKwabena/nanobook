@@ -29,7 +29,7 @@ TEST_SAN  := $(BIN)/run_tests_asan
 
 HEADERS   := $(wildcard cpp/include/nanobook/*.hpp)
 
-.PHONY: all tools tests check bench data clean fmt-check help
+.PHONY: all tools tests check bench data clean fmt-check help brief fetch research
 
 all: tools tests
 
@@ -40,6 +40,11 @@ help:
 	@echo "make data      — generate synthetic feeds into $(DATA)/"
 	@echo "make bench     — 10M-message replay benchmark"
 	@echo "make clean     — remove $(BUILD)/ and generated feeds"
+	@echo ""
+	@echo "daily loop (real IEX data):"
+	@echo "  make fetch     — stream the latest published IEX DEEP day into data/features/"
+	@echo "  make research  — score every unscored day out-of-sample, then retrain"
+	@echo "  make brief     — print the morning brief"
 
 tools: $(TOOL_BIN)
 
@@ -104,3 +109,22 @@ bench: tools
 
 clean:
 	rm -rf $(BUILD) $(DATA)/*.itch $(DATA)/*_truth.csv
+
+# ---------------------------------------------------------------------------
+# Daily loop. `fetch` streams a day of IEX DEEP (11-12 GB) without landing it;
+# `research` scores it with a model that predates it and then retrains;
+# `brief` prints the result. Run them in that order — scoring before retraining
+# is what keeps the track record out-of-sample.
+# ---------------------------------------------------------------------------
+PY := $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
+
+fetch: tools
+	$(PY) scripts/fetch_day.py --date latest
+
+research:
+	$(PY) scripts/run_day.py --date all
+
+brief:
+	@$(PY) scripts/brief.py
+
+daily: fetch research brief

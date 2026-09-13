@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# nanobook — one entry point for the daily loop.
+#
+#   nanobook fetch [DATE]   stream a day of IEX DEEP into data/features/
+#   nanobook research       score unscored days out-of-sample, then retrain
+#   nanobook brief          print the morning brief
+#   nanobook daily          all three, in that order
+#
+# Order matters: scoring must happen before retraining, or every number becomes
+# in-sample. `daily` enforces it.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+PY=python3
+[ -x .venv/bin/python ] && PY=.venv/bin/python
+
+usage() {
+    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+    exit "${1:-0}"
+}
+
+cmd="${1:-brief}"
+shift || true
+
+case "$cmd" in
+    fetch)
+        [ -x build/bin/iex_replay ] || make tools
+        if [ $# -gt 0 ]; then
+            "$PY" scripts/fetch_day.py --date "$1" "${@:2}"
+        else
+            "$PY" scripts/fetch_day.py --date latest
+        fi
+        ;;
+    research)  "$PY" scripts/run_day.py --date all "$@" ;;
+    brief)     "$PY" scripts/brief.py "$@" ;;
+    daily)
+        [ -x build/bin/iex_replay ] || make tools
+        "$PY" scripts/fetch_day.py --date latest
+        "$PY" scripts/run_day.py --date all
+        "$PY" scripts/brief.py
+        ;;
+    -h|--help|help) usage 0 ;;
+    *) echo "nanobook: unknown command '$cmd'" >&2; usage 1 ;;
+esac

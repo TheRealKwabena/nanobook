@@ -44,3 +44,25 @@ jobs:
         run: |
           make tools CXX=${{ matrix.cxx }} OPT="-O2 -DNDEBUG"
           ./build/bin/bench_structures --ops 2000000 --live 50000 --reps 1
+
+  research:
+    name: research layer (python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install --quiet numpy pandas scipy pytest
+
+      # The two tests that matter here are the calibration pair: the pipeline must
+      # find nothing in pure noise, and must recover a planted signal. A research
+      # pipeline that reports an edge on random data is not measuring anything.
+      - name: Research tests
+        run: python -m pytest tests/ -q
+
+      - name: End-to-end research loop on synthetic feature data
+        run: python scripts/selftest_loop.py

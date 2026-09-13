@@ -1,0 +1,25 @@
+{
+  "45f29a715f5a": {
+    "config": {
+      "alpha": 50.0,
+      "cost_multiplier": 0.5,
+      "features": [
+        "queue_imbalance",
+        "depth_imbalance",
+        "flow_imbalance",
+        "signed_flow_norm",
+        "spread_ticks",
+        "trade_intensity",
+        "ret_1",
+        "ret_5",
+        "ret_30",
+        "vol_30",
+        "depth_ratio"
+      ],
+      "horizon_s": 10,
+      "model": "ridge",
+      "train_days": 20
+    },
+    "first_seen": "2026-09-13T01:13:45+00:00"
+  }
+}

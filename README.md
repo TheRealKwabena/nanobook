@@ -27,7 +27,7 @@ reconstruction is then checked against event by event.
 ```
 77.0 M messages/sec   13.0 ns/message   2.3 GB/s        single core, Apple M5
 0 mismatches across 333,045 verified events             byte-exact vs. oracle
-90 tests, 187,111 assertions, clean under ASan + UBSan
+91 C++ tests + 20 research tests, clean under ASan + UBSan
 ```
 
 ---
@@ -85,6 +85,59 @@ factor and probe distribution are observable rather than opaque. For a quoting
 strategy the bounded tail is worth more than the mean.
 
 ---
+
+## The daily loop
+
+```bash
+./nanobook daily        # fetch the latest IEX day, score it out-of-sample, print the brief
+```
+
+Three commands, and the order is enforced: **score before retraining**, or every
+number becomes in-sample.
+
+```
+./nanobook fetch        stream a day of IEX DEEP into data/features/
+./nanobook research     score unscored days with a model that predates them, then retrain
+./nanobook brief        print the morning brief
+```
+
+Because IEX publishes T+1 and a model file for day D is written before day D+1
+exists, predictions are out-of-sample in the strong sense — made before the outcome
+was knowable, not merely held out from a shuffle. The scorecard is append-only and
+records which model file made each prediction and that model's training
+fingerprint, so the ordering is auditable rather than asserted.
+
+### What it says today
+
+Five out-of-sample days, ten symbols, 285,750 one-second bars of real IEX DEEP:
+
+```
+  date           rows       IC    hit     gross       net   t(net)   spread
+  20191219     56,679  +0.1330  0.566    +0.072    -1.403   -56.10    2.95b
+  20191220     63,240  +0.1341  0.573    +0.115    -1.254   -56.53    2.74b
+  20191223     54,429  +0.1231  0.565    +0.093    -1.250   -50.75    2.69b
+  20191226     54,750  +0.1411  0.580    +0.156    -1.389   -50.00    3.09b
+  20191227     56,652  +0.1646  0.582    +0.124    -1.262   -51.78    2.77b
+
+  information coefficient   +0.1392     (reversal baseline +0.1140)
+  gross / net per bar       +0.112 bp  /  -1.310 bp
+  mean quoted spread        2.84 bp
+  predictions beating cost  1.6%
+
+  No tradeable edge. Net of 2.8 bp of spread the signal loses 1.31 bp per bar.
+    The direction is informative (IC +0.1392) but the moves it predicts are
+    smaller than the cost of trading them.
+```
+
+**Book imbalance genuinely predicts the direction of the next ten seconds** — IC
++0.14, 58% directional accuracy, stable across every day, gross returns positive at
+t = +7 to +13. And it is **not tradeable**: the moves it predicts average 0.11 bp
+while crossing the spread costs 1.4 bp, so only 1.6% of predictions are even large
+enough to pay for themselves.
+
+That is the honest answer, it is what the microstructure literature finds at this
+horizon, and it is the answer this pipeline is built to be *able* to give. A
+research loop that can only report success is not measuring anything.
 
 ## Quickstart
 
@@ -462,7 +515,8 @@ across sizes chosen to straddle every word and summary-word boundary, all under
 AddressSanitizer and UndefinedBehaviorSanitizer.
 
 ```
-90 tests in 9 suites, 187,111 assertions, 0 failures
+91 tests in 9 suites, 187,114 assertions, 0 failures      (C++)
+20 passed                                                 (research layer)
 ```
 
 The IEX decoder gets a fourth layer: its tests decode the **worked examples
@@ -501,9 +555,19 @@ cpp/tools/
   replay.cpp         reconstruct ITCH, verify, report
   iex_replay.cpp     reconstruct DEEP from a capture or a pipe
   bench_structures.cpp  head-to-head vs the standard library
+python/nanobook/
+  features.py        model matrix; time-based targets, trailing z-scores, filters
+  model.py           walk-forward ridge, serialised for audit
+  scoring.py         IC, HAC t-stats, cost-aware PnL, deflated Sharpe
+  store.py           on-disk layout, append-only scorecard, trial registry
 scripts/
   fetch_day.py       stream one day of IEX DEEP, store the feature table
-cpp/tests/           90 tests, zero dependencies
+  run_day.py         score out-of-sample, then retrain
+  brief.py           the morning brief
+  selftest_loop.py   the calibration pair (planted signal / pure noise)
+nanobook             one entry point: fetch | research | brief | daily
+cpp/tests/           91 tests, zero dependencies
+tests/               20 research tests (pytest)
 ```
 
 The library is header-only; `make tools` and `make tests` are the only build
@@ -516,9 +580,8 @@ steps. `CMakeLists.txt` drives the same sources for IDE and CI use.
 Stage 1 (ITCH feed handler and L3 book) and stage 2 (IEX DEEP, streaming
 transport, daily pipeline) are complete and verified. Next:
 
-- [ ] **Daily brief** — a `nanobook brief` command that reports yesterday's
-      microstructure and scores what the previous day's signals predicted, so the
-      track record is genuinely forward out-of-sample rather than a backtest.
+- [x] **Daily brief and live scorecard** — `./nanobook daily`.
+- [ ] **Accumulate 20+ scored days** so the scorecard stops being provisional.
 - [ ] **`pybind11` bindings** exposing the book as a streaming event iterator, so
       research runs on the exact reconstructed state rather than a re-derivation.
 - [ ] **Microstructure features** computed in C++ on the event stream: order-flow
@@ -533,6 +596,82 @@ transport, daily pipeline) are complete and verified. Next:
       microstructure signal that ignores the spread it must cross is not a signal.
 
 ---
+
+## How the research layer avoids fooling itself
+
+Every item below is here because the pipeline **did** fool itself first, and the
+check is what caught it.
+
+### The calibration pair
+
+`scripts/selftest_loop.py` runs the real walk-forward loop twice: once on synthetic
+data with a planted signal, once on pure noise.
+
+```
+=== loop on data WITH a planted signal ===
+  out-of-sample IC: +0.829, +0.841, +0.799, +0.835   -> mean +0.8261  recovered
+=== loop on PURE NOISE ===
+  out-of-sample IC: +0.003, -0.017, -0.002, +0.007   -> mean -0.0022  found nothing
+```
+
+Both halves are necessary. A pipeline tuned until it finds nothing passes the null
+test; one with a leak passes the recovery test. It runs in CI.
+
+### Three leaks the null test caught
+
+**Rows stamped with the grid boundary instead of the event time.** `iex_replay`
+samples on a one-second grid and skips quiet intervals. Stamping a row with the
+boundary it crossed meant that on a thinly quoted symbol a row could claim time T
+while carrying book state from T+100s — so its features were newer than its own
+timestamp, and any forward return measured from it was partly measuring the past.
+That produced an IC of +0.24 and a hit rate of *0.40*, and the contradiction between
+those two numbers is what gave it away. Fixed in `iex_book.hpp`, with
+[a regression test](cpp/tests/test_iex_transport.cpp).
+
+**A price level smuggled in as a feature.** `spread_bps` is `spread / mid`, which
+for a name quoting a fixed number of ticks is nearly a deterministic function of the
+*price level*. Regressing forward returns on a level along a single random-walk path
+manufactures correlation from nothing — the classic integrated-variable regression
+trap. On synthetic noise it reached Spearman −0.28 against the forward return and
+the model reported IC +0.22 on data containing no signal at all. The feature is now
+`spread_ticks`, which carries no level; basis points survive only as the *cost*,
+never as an input.
+
+**A test that passed for the wrong reason.** The signal-recovery test used to tilt
+the book and move the mid on the same bar — contemporaneous, never predictive. It
+"recovered" a signal anyway, through the level channel above. The planted state now
+strictly leads the return.
+
+### Statistical practice
+
+- **Newey-West standard errors.** A 10-second target sampled every second shares 9
+  seconds of path with its neighbour, so ordinary errors are far too small. The HAC
+  correction shrinks the t-statistic on overlapped data by ~60% and leaves iid data
+  untouched; both directions are tested.
+- **Deflated Sharpe with a trial counter.** Every configuration ever scored is
+  recorded in `data/trials.json`, so changing the horizon to get a better number
+  increments the divisor. The best of 50 noise strategies over 20,000 bars shows a
+  scaled Sharpe of 2.28 — that is the bar. (An early version reported 1.000 for
+  everything because it was fed a √n-scaled Sharpe instead of a per-observation
+  one; there is now a test pinning the units.)
+- **Costs that can kill the signal**, and do.
+- **Baselines.** Plain short-horizon reversal is scored alongside, and the brief
+  says so out loud when the baseline wins.
+- **Trailing-only standardisation.** Features are z-scored per symbol on a
+  backward-looking window; sample-selection filters use an expanding median rather
+  than the whole session's, because "small look-ahead" is not a category worth
+  having.
+- **Tradeability filters.** Bars with a stale book, a sub-round-lot touch, or a
+  spread above 25 bp are dropped. Unfiltered, one December session had a 99th
+  percentile spread of 2,331 bp and forward returns with a 232 bp standard
+  deviation — artefacts of a near-empty single-venue book, not market moves.
+
+### Data quality gates correctness
+
+`iex_replay` exits nonzero on any transport defect — sequence gap, replayed
+segment, unknown message type, truncated packet. A book rebuilt across a gap is
+wrong with no other symptom, so the pipeline refuses to produce features rather
+than producing quietly wrong ones.
 
 ## Non-goals
 

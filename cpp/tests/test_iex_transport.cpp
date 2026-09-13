@@ -496,3 +496,31 @@ NB_TEST(iex_book, trading_status_is_tracked_per_symbol) {
     r.on_trading_status(TradingStatus(m.data()));
     CHECK_EQ(r.book(0).trading_status(), 'H');
 }
+
+NB_TEST(iex_book, samples_carry_the_true_event_time_not_the_grid_boundary) {
+    // Regression test for a look-ahead leak. With a 1-second grid and a symbol
+    // that goes quiet, an event arriving long after a boundary must be stamped
+    // with its OWN time, not with the stale boundary it crosses. Stamping the
+    // boundary makes a row's features newer than its own timestamp, and any
+    // forward return measured from it is partly measuring the past.
+    struct Sampler {
+        std::vector<std::int64_t> stamps;
+        void on_sample(std::uint32_t, DeepBook&, std::int64_t ts) { stamps.push_back(ts); }
+    } s;
+
+    const std::vector<std::string> want = {"AAPL"};
+    DeepBookRouter<Sampler> r(want, s, /*sample_ns=*/1'000'000'000);
+
+    // t = 1s establishes the grid; the next boundary is 2s.
+    // The following event lands at 97s — 95 seconds past that boundary.
+    for (std::int64_t ts : {1'000'000'000LL, 97'000'000'000LL, 98'500'000'000LL}) {
+        const auto m = plu(Side::Buy, 0x01, ts, "AAPL", 100, 1000000);
+        r.on_price_level_update(PriceLevelUpdate(m.data()));
+    }
+
+    CHECK_EQ(s.stamps.size(), 2u);
+    if (s.stamps.size() == 2) {
+        CHECK_EQ(s.stamps[0], 97'000'000'000LL);   // not 2'000'000'000
+        CHECK_EQ(s.stamps[1], 98'500'000'000LL);   // not 98'000'000'000
+    }
+}

@@ -324,6 +324,16 @@ class DeepBookRouter : public DeepHandlerBase {
     }
 
   private:
+    // The grid is a DOWNSAMPLER, not a clock. Every emitted row is stamped with
+    // the book's actual event timestamp.
+    //
+    // Stamping rows with the grid boundary instead is a look-ahead leak, and a
+    // severe one. On a thinly quoted symbol an event can arrive 100 seconds after
+    // the boundary it triggers; the row would then claim time T while carrying
+    // book state from T+100, so its features are contemporaneous with — or later
+    // than — its own label. Any forward return computed from that label is partly
+    // measuring the past, which shows up as a spectacular and entirely false
+    // information coefficient.
     void maybe_sample(std::uint32_t i, std::int64_t ts) {
         if (sample_ns_ == 0) {
             sampler_->on_sample(i, books_[i], ts);
@@ -331,16 +341,14 @@ class DeepBookRouter : public DeepHandlerBase {
             return;
         }
         if (next_sample_[i] == 0) {
-            // Align the grid to the wall clock so samples from different symbols
-            // and different days land on comparable boundaries.
             next_sample_[i] = (ts / sample_ns_) * sample_ns_ + sample_ns_;
             return;
         }
         if (ts < next_sample_[i]) return;
-        sampler_->on_sample(i, books_[i], next_sample_[i]);
+        sampler_->on_sample(i, books_[i], ts);   // true event time, never the grid
         ++samples_;
-        // Skip forward over any empty intervals rather than emitting one row per
-        // grid step through a quiet stretch.
+        // Skip forward over quiet intervals rather than emitting a row per grid
+        // step through a stretch where nothing happened.
         next_sample_[i] = (ts / sample_ns_) * sample_ns_ + sample_ns_;
     }
 
