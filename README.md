@@ -24,6 +24,23 @@ it fast: the synthetic feed generator maintains an independent `std::map`-based
 shadow book and emits ground-truth top-of-book after **every message**, which the
 reconstruction is then checked against event by event.
 
+## At a glance
+
+- **What it is.** Software that reads the raw data an exchange broadcasts — every
+  order placed, cancelled and filled — and rebuilds, in memory, the live book of
+  buyers and sellers that traders actually see.
+- **Fast.** 77 million messages a second on a single core, 13 nanoseconds each. A
+  full NASDAQ trading day reconstructs in about four seconds.
+- **Verified.** Checked against a separately written reference implementation after
+  every one of 333,045 events, with zero disagreements. 111 tests, run on Linux and
+  macOS in CI under memory and undefined-behaviour sanitizers.
+- **Honest.** The research half looks for a tradeable signal, finds a real one, and
+  reports that it is too small to cover the cost of trading it. The pipeline is built
+  to be capable of that answer — it is run against pure noise in CI and required to
+  find nothing.
+- **Stack.** C++20 with no third-party dependencies; Python (NumPy, pandas, SciPy,
+  statsmodels) for the research layer.
+
 ```
 77.0 M messages/sec   13.0 ns/message   2.3 GB/s        single core, Apple M5
 0 mismatches across 333,045 verified events             byte-exact vs. oracle
